@@ -36,16 +36,3 @@
   git push -f  # 强制推送到远程库(远程回滚)
   ```
 
-  
-
-
-
-
-
-
-
-sudo docker run -it --name=HostM --hostname=HostM --net=intranet --ip=192.168.60.3 --privileged "seedubuntu" /bin/bash
-
-
-
-sudo docker run -it --name=HostA --hostname=HostA --net=intranet --ip=192.168.60.2 --privileged "seedubuntu" /bin/bash
