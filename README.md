@@ -5,14 +5,15 @@
 
 
 > A record of the learning trajectory of a pwn rookie🐣
-### Abstract
+## Abstract
+
 ***
 * Tool `libelf`.
 * Website for CTF : [picoctf (CMU)](https://picoctf.org/)
 
 
 
-### VM-Ubuntu共享主机Clash
+## VM-Ubuntu共享主机Clash
 
 1. NAT模式
 
@@ -42,7 +43,7 @@
 
 
 
-### Environment
+## Environment
 
 ***
 
@@ -113,7 +114,7 @@ chsh -s /bin/zsh #将zsh设置成默认shell（不设置的话启动zsh只有直
 
 <img src="C:\Users\XiZhongKuiYue\AppData\Roaming\Typora\typora-user-images\image-20220531222744311.png" alt="image-20220531222744311" style="zoom:33%;" />
 
-oh-my=zsh配置
+### oh-my-zsh配置
 
 > ###### 1.查看什么Theme可以用
 >
@@ -138,6 +139,8 @@ oh-my=zsh配置
 > ```ini
 >    ZSH_THEME="amuse"
 > ```
+
+
 
 更改默认shell
 
@@ -190,6 +193,101 @@ git config --global http.proxy
 ```
 
 使用该行命令即可
+
+
+
+#### zsh-autosuggestions
+
+> 自动补全
+>
+> 只需输入部分命令即可根据之前输入过的命令提示，按右键→即可补全
+
+安装
+
+```awk
+git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
+```
+
+在 `~/.zshrc` 中配置
+
+```javascript
+plugins=(其他的插件 zsh-autosuggestions)
+```
+
+更新配置后重启
+
+```bash
+source ~/.zshrc
+```
+
+
+
+#### colored-man-pages
+
+> 给你带颜色的 man 命令。
+>
+> 这个是oh-my-zsh自带的,我的是在：
+>
+> `/home/ganliber/.oh-my-zsh/plugins/colored-man-pages`
+
+将其加入`~/.zshrc`中即可
+
+
+
+#### autojump
+
+> **只需要按一个`j`就可以快速跳转到目标目录**（之前进入过的目录）
+
+安装：
+
+```bash
+git clone https://github.com/wting/autojump.gitCopy
+```
+
+还需要额外配置一下，进入克隆下来的仓库目录，执行（你得先装python）：
+
+```bash
+./install.pyCopy
+```
+
+最后把以下代码加入到`.zshrc`：
+
+```bash
+[[ -s ~/.autojump/etc/profile.d/autojump.sh ]] && . ~/.autojump/etc/profile.d/autojump.shCopy
+```
+
+**使用**：
+
+```bash
+j dirname		# 注意不是路径名而是文件夹名Copy
+```
+
+*ps：这里的`dirname`不用写全也可以（可以只是一部分），tql！😈*
+
+删除无效路径：
+
+```bash
+j --purge 无效路径
+```
+
+* Bug
+
+* **Problem scenario**:
+
+  ```py
+  /usr/bin/env: ‘python’: No such file or directory
+  ```
+
+  **Possible Solution #1**
+
+  - If Python 3 is not installed, install it: `apt-get install python3`
+
+  **Possible Solution #2**
+
+  - If Python 3 has been installed, run these commands: `whereis python3`
+  - Then we create a symlink to it: `sudo ln -s /usr/bin/python3 /usr/bin/python`
+
+* 注意这个`j`跳转指令不依赖完整路径只适用于之前已经访问过的目录，并不适用于未访问过的目录！
 
 
 
