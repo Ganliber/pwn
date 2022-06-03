@@ -460,3 +460,22 @@ git clone https://github.com/niklasb/libc-database.git
 git clone https://github.com/bash-c/main_arena_offset.git
 ```
 
+
+
+### 64-bit ubuntu 运行32位程序
+
+安装32位运行环境
+
+```csharp
+sudo dpkg --add-architecture i386
+sudo apt-get update
+sudo apt-get install zlib1g:i386 libstdc++6:i386 libc6:i386
+sudo apt-get install lib32z1
+```
+
+
+
+
+
+
+
