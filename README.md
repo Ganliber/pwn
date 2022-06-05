@@ -475,6 +475,191 @@ sudo apt-get install lib32z1
 
 
 
+### 修改ELF文件libc为指定版本
+
+遇到本地libc与题目libc不匹配问题，导致一些套路无法在本地调试和利用。要想gdb,不仅得要安个符合版本的虚拟机或起一个docker还有部署一边pwn环境.于是想找下有没有更方便的方法. 于是找到了patchelf更换libc的方法。
+
+#### glibc-all-in-one与patchelf安装
+
+glibc-all-in-one，正如其名是一个**多版本libc的下载安装管理工具**，主要支持2.19，2.23-2.29版本的libc和i686, amd64的架构。这是github一个开源项目因此我们git它既可。
+
+安装命令：
+
+```
+git clone https://github.com/matrix1001/glibc-all-in-one.git 
+cd glibc-all-in-one 
+chmod a+x build download extract
+```
+
+patchelf在ubuntu直接`apt install patchelf`即可。
+
+
+
+
+
+#### 下载对应的ld
+
+进入`glibc-all-in-one`文件夹下，运行脚本`update_list`，然后`cat list`查看对应版本的ld
+
+```shell
+./update_list
+cat list
+2.23-0ubuntu11.3_amd64
+2.23-0ubuntu11.3_i386
+2.23-0ubuntu3_amd64
+2.23-0ubuntu3_i386
+2.27-3ubuntu1.5_amd64
+
+***********************
+
+$ ./libc-2.23.so    
+GNU C Library (Ubuntu GLIBC 2.23-0ubuntu11) stable release version 2.23, by Roland McGrath et al.
+```
+
+注意先通过执行对应的`libc`查看适配的版本（ubuntu版本+libc版本）
+
+执行脚本`download`
+
+```shell
+./download 2.23-0ubuntu11.3_i386
+```
+
+下载好的`glibc`在lib文件夹中
+
+```shell
+$ cd 2.23-0ubuntu11.3_i386
+$ ls
+ld-2.23.so               libcidn.so.1      libm.so.6              libnss_files.so.2       libpthread-2.23.so   libthread_db.so.1
+ld-linux.so.2            libcrypt-2.23.so  libnsl-2.23.so         libnss_hesiod-2.23.so   libpthread.so.0      libutil-2.23.so
+libanl-2.23.so           libcrypt.so.1     libnsl.so.1            libnss_hesiod.so.2      libresolv-2.23.so    libutil.so.1
+libanl.so.1              libc.so.6         libnss_compat-2.23.so  libnss_nis-2.23.so      libresolv.so.2
+libBrokenLocale-2.23.so  libdl-2.23.so     libnss_compat.so.2     libnss_nisplus-2.23.so  librt-2.23.so
+libBrokenLocale.so.1     libdl.so.2        libnss_dns-2.23.so     libnss_nisplus.so.2     librt.so.1
+libc-2.23.so             libm-2.23.so      libnss_dns.so.2        libnss_nis.so.2         libSegFault.so
+libcidn-2.23.so          libmemusage.so    libnss_files-2.23.so   libpcprofile.so         libthread_db-1.0.so
+```
+
+然后复制ld文件到pwn题目录下
+
+```shell
+cp ./ld-2.23.so ~/Documents/ROP/ret2libc3
+```
+
+更改文件的`ld`和`libc`
+
+```shell
+patchelf --replace-needed /lib/i386-linux-gnu/libc.so.6 ./libc-2.23.so ./ret2libc3
+(or) patchelf --replace-needed libc.so.6 ./libc-2.23.so ./ret2libc3
+---------------------------------------------------------------------- 原本的libc版本通过ldd查看
+patchelf --set-interpreter ./ld-2.23.so ./ret2libc3
+----------------------------------------------------------------------
+./ret2libc3 --> 执行查看
+```
+
+顺便提一嘴定向查找历史指令
+
+```shell
+history | grep patchelf
+```
+
+
+
+
+
+#### 对应libc编译
+
+我们可以通过在glibc-all-in-one目录下执行`./build`即可获对应版本的libc和ld.so
+
+例如：`./build 2.29 i686`
+
+下载安装编译 32位的2.29 版本libc。
+
+#### patchelf更改程序libc
+
+* 修改`ld.so`：：：：：：执行`patchelf --set-interpreter ld.so elf` 来修改文件`ld.so`
+* 修改`libc.so`：：：：：执行`patchelf --replace-needed old_libc.so new_libc.so elf`来修改文件`libc.so`
+
+
+
+### 解析并更改ELF文件的依赖库
+
+> 详见博客：[pwn更换目标程序libc_pwn切换libc](https://blog.csdn.net/yongbaoii/article/details/111938821?ops_request_misc=%7B%22request%5Fid%22%3A%22165435003416781667876674%22%2C%22scm%22%3A%2220140713.130102334..%22%7D&request_id=165435003416781667876674&biz_id=0&utm_medium=distribute.pc_search_result.none-task-blog-2~all~sobaiduend~default-2-111938821-null-null.142^v11^pc_search_result_control_group,157^v13^control&utm_term=patchelf如何更换libc&spm=1018.2226.3001.4187)
+
+`readelf -h`查看帮助
+
+```bash
+-d --dynamic           Display the dynamic section (if present)
+```
+
+因此使用
+
+```bash
+readelf -d my-program
+```
+
+可以查看动态节的内容
+
+使用`ldd`命令查看某ELF文件依赖的`libc`库文件的路径
+
+```bash
+# ganliber @ ganliber-virtual-machine in ~/Documents/ROP/ret2libc3 [21:39:29] 
+$ ls  
+libc-2.23.so  ret2libc3
+# ganliber @ ganliber-virtual-machine in ~/Documents/ROP/ret2libc3 [21:41:14] 
+$ ldd ret2libc3
+	linux-gate.so.1 (0xf7f01000)
+	libc.so.6 => /lib/i386-linux-gnu/libc.so.6 (0xf7cf9000)
+	/lib/ld-linux.so.2 (0xf7f03000)
+```
+
+然后判断你要换的libc的版本，因为`libc`的版本跟`ld`的版本是要匹配的，比如这里我要换的是libc_32.so.6，我查看他的版本是2.23，所以你要把ld换成2.23的。
+
+怎么查看libc版本，直接拖到shell里面跑一下就好，如（2.23）
+
+```bash
+# ganliber @ ganliber-virtual-machine in ~/Documents/ROP/ret2libc3 [21:47:04] 
+$ ls              
+libc-2.23.so  ret2libc3
+# ganliber @ ganliber-virtual-machine in ~/Documents/ROP/ret2libc3 [21:47:05] 
+$ ./libc-2.23.so
+GNU C Library (Ubuntu GLIBC 2.23-0ubuntu11) stable release version 2.23, by Roland McGrath et al.
+Copyright (C) 2016 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.
+There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.
+Compiled by GNU CC version 5.4.0 20160609.
+Available extensions:
+	crypt add-on version 2.1 by Michael Glad and others
+	GNU Libidn by Simon Josefsson
+	Native POSIX Threads Library by Ulrich Drepper et al
+	BIND-8.2.3-T5B
+libc ABIs: UNIQUE IFUNC
+For bug reporting instructions, please see:
+<https://bugs.launchpad.net/ubuntu/+source/glibc/+bugs>.
+```
+
+查看`ELF`文件原来所用的`libc`版本（2.31）
+
+```shell
+# ganliber @ ganliber-virtual-machine in ~/Documents/ROP/ret2libc3 [21:47:13] 
+$ ldd ret2libc3   
+	linux-gate.so.1 (0xf7f96000)
+	libc.so.6 => /lib/i386-linux-gnu/libc.so.6 (0xf7d8e000)
+	/lib/ld-linux.so.2 (0xf7f98000)
+
+# ganliber @ ganliber-virtual-machine in ~/Documents/ROP/ret2libc3 [21:48:07] 
+$ /lib/i386-linux-gnu/libc.so.6
+GNU C Library (Ubuntu GLIBC 2.31-0ubuntu9.9) stable release version 2.31.
+Copyright (C) 2020 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.
+There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.
+Compiled by GNU CC version 9.4.0.
+libc ABIs: UNIQUE IFUNC ABSOLUTE
+For bug reporting instructions, please see:
+<https://bugs.launchpad.net/ubuntu/+source/glibc/+bugs>.
+```
+
 
 
 
