@@ -662,5 +662,121 @@ For bug reporting instructions, please see:
 
 
 
+## 安装LibcSearcher
+
+> 官方网址：https://pypi.org/project/LibcSearcher/
+
+```
+在练习Pwn过程中，要用到python的一个库，叫做LibcSearcher，安装方法如下：
+> 新版的LibcSearcher
+1. pip3 install LibcSearcher (不要直接 clone !!!)
+2. alias python=python3 (设置python默认为py3)
+```
+
+<img src="D:\github\pwn\pwn_study\images\libcSearcher_new_py3.png" alt="libcSearcher_new_py3" style="zoom:50%;" />
+
+> 只需要联网使用即可
+
+<img src="C:\Users\XiZhongKuiYue\AppData\Roaming\Typora\typora-user-images\image-20220606004831069.png" alt="image-20220606004831069" style="zoom: 50%;" />
+
+
+
+### LibcSearcher 配合本地 libc-database
+
+本地安装`LibcSearcher`（非联网版本）
+
+> 原仓库地址https://github.com/lieanu/LibcSearcher
+
+```python
+git clone https://github.com/lieanu/LibcSearcher.git
+cd LibcSearcher
+python setup.py develop
+```
+
+使用
+
+```python
+from LibcSearcher import *
+
+#第二个参数，为已泄露的实际地址,或最后12位(比如：d90)，int类型
+obj = LibcSearcher("fgets", 0X7ff39014bd90)
+
+obj.dump("system")        #system 偏移
+obj.dump("str_bin_sh")    #/bin/sh 偏移
+obj.dump("__libc_start_main_ret")    
+```
+
+进入下载的文件夹下
+
+删除`libc-database`
+
+```python
+rm -f -r libc-database
+```
+
+然后
+
+```python
+git clone https://github.com/niklasb/libc-database.git
+cd libc-database
+./get ubuntu
+```
+
+自添加libc库（可能存在有些`libc`版本的库在远程`database`中没有）
+
+> `./get` 遇到问题可见https://blog.csdn.net/Invin_cible/article/details/121326430
+
+```python
+./get 下载get工具, 若已下载请直接跳过
+
+./add usr/lib/libc-2.21-so 向数据库中添加自定义 libc
+
+./find __libc_start_main xxx 这里输入你要查找的函数的真实地址的后三位
+
+./dump xxx 转储一些有用的偏移量，给出一个 libc ID, 这里输入第三步得到的结果中ID后的libc库。这样你就可以得到需要的文件中的偏移地址了
+```
+
+
+
+## Linux 关闭 ASLR
+
+ALSR由 `/proc/sys/kernel/randomize_va_space` 决定，默认为2
+
+> 0 - 表示关闭进程地址空间随机化
+>
+> 1 - 表示将mmap的基址，stack和vdso页面随机化。
+>
+> 2 - 表示在1的基础上增加栈（heap）的随机化。
+
+要关闭ALSR，只需将`randomize_va_space`里面的内容改为0即可。
+
+修改该文件不能直接用 `vi` 或者 `vim` 进行修改,也不能直接 `sudo echo 0 > /proc/sys/kernel/randomize_va_space`
+
+使用此条命令即可关闭ALSR：`sudo sh -c "echo 0 > /proc/sys/kernel/randomize_va_space"`
+
+查看系统ASLR是否开启
+
+```shell
+$ cat /proc/sys/kernel/randomize_va_space     
+2
+```
+
+
+
+
+
+## 关于Ubuntu高版本`system`调用失败
+
+> 由于是在64位机器上运行32位程序，因此需要考虑`rsp`的`16-bit`对齐问题
+
+* Ubuntu18.04 64位 和 部分Ubuntu16.04 64位 调用system的时候，**rsp的最低字节必须为0x00（栈以16字节对齐）**，否则无法运行system指令。要解决这个问题，**只要将返回地址设置为跳过函数开头的push rbp就可以了**
+* 栈的字节对齐，实际是指栈顶指针必须须是16字节的整数倍。我们都知道栈对齐帮助在尽可能少的内存访问周期内读取数据，不对齐堆栈指针可能导致严重的性能下降。
+
+
+
+
+
+
+
 
 
