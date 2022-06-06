@@ -662,8 +662,10 @@ For bug reporting instructions, please see:
 
 
 
-## 安装LibcSearcher
+## 安装LibcSearcher(X)
 
+> **！！！LibcSearcher已经不能用了，就自己搭建本地`libc-database`使用`./add ./find ./dump`三剑客即可！！！**
+>
 > 官方网址：https://pypi.org/project/LibcSearcher/
 
 ```
@@ -697,8 +699,7 @@ python setup.py develop
 
 ```python
 from LibcSearcher import *
-
-#第二个参数，为已泄露的实际地址,或最后12位(比如：d90)，int类型
+# 第二个参数，为已泄露的实际地址,或最后12位(比如：d90)，int类型
 obj = LibcSearcher("fgets", 0X7ff39014bd90)
 
 obj.dump("system")        #system 偏移
@@ -719,7 +720,8 @@ rm -f -r libc-database
 ```python
 git clone https://github.com/niklasb/libc-database.git
 cd libc-database
-./get ubuntu
+./get ubuntu  
+注意需要查看 README.md 下载需要满足的依赖项即 Debian-based 下的各种软件工具, 可以通过[name] --version查看
 ```
 
 自添加libc库（可能存在有些`libc`版本的库在远程`database`中没有）
@@ -735,6 +737,18 @@ cd libc-database
 
 ./dump xxx 转储一些有用的偏移量，给出一个 libc ID, 这里输入第三步得到的结果中ID后的libc库。这样你就可以得到需要的文件中的偏移地址了
 ```
+
+> 成功添加本地的`libc`库
+>
+> 注意`local-xxxxxxxxxx`是他的`ID`哦，`./dump`的时候就需要将整个ID输入到后面，这样就可以查看到相应的偏移了！！！
+>
+> 
+
+<img src="D:\github\pwn\pwn_study\images\libc-database_added_custom_libc.png" alt="libc-database_added_custom_libc" style="zoom: 50%;" />
+
+
+
+
 
 
 
@@ -776,7 +790,15 @@ $ cat /proc/sys/kernel/randomize_va_space
 
 
 
+## 补充
 
+> 补充一些小技巧
 
-
-
+```python
+ info proc map 查看各个库加载信息然后寻找 "/bin/sh" 字符串
+ strings: 查看文件中可见字符串
+ strings -a -t x /lib32/libc.so.6 | grep "/bin/sh"
+ objdump -d file | grep "ret" 可以用来查找ret指令
+ objdump -x [filename] 打印头文件信息以及区段信息
+ objdump -T libc.so | grep gets
+```

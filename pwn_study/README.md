@@ -29,9 +29,18 @@ Compiled by GNU CC version 5.4.0 20160609.
 
 ## libc-database 本地部署
 
-
-
-
+> 不要再借助`LibcSearcher`了！！！
+>
+> 使用本地`libc-database`下的三剑客
+>
+> ```python
+> ./add 
+> ./find 
+> ./dump
+> 注意可以在 dump 脚本中添加你想要看到的函数的偏移！！！！！
+> ```
+>
+> 即可！！！
 
 ### libc_database的使用方法
 
