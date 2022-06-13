@@ -1763,6 +1763,10 @@ chmod a+x build download extract
 
 patchelf在ubuntu直接`apt install patchelf`即可。
 
+
+
+
+
 ### 对应libc编译
 
 我们可以通过在glibc-all-in-one目录下执行`./build`即可获对应版本的libc和ld.so
@@ -1770,6 +1774,10 @@ patchelf在ubuntu直接`apt install patchelf`即可。
 例如：`./build 2.29 i686`
 
 下载安装编译 32位的2.29 版本libc。
+
+
+
+
 
 ### patchelf更改程序libc
 
