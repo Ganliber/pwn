@@ -1732,6 +1732,14 @@ PIE    ->  -no-pie
   $ cat /proc/sys/kernel/randomize_va_space
   2
   ```
+  
+* 关闭ASLR
+
+  ```python
+  sudo sh -c "echo 0 > /proc/sys/kernel/randomize_va_space"
+  ```
+
+  
 
 
 

