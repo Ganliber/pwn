@@ -241,19 +241,20 @@ source ~/.zshrc
 安装：
 
 ```bash
-git clone https://github.com/wting/autojump.gitCopy
+git clone https://github.com/wting/autojump
 ```
 
 还需要额外配置一下，进入克隆下来的仓库目录，执行（你得先装python）：
 
 ```bash
-./install.pyCopy
+./install.py
 ```
 
 最后把以下代码加入到`.zshrc`：
 
 ```bash
-[[ -s ~/.autojump/etc/profile.d/autojump.sh ]] && . ~/.autojump/etc/profile.d/autojump.shCopy
+[[ -s /home/sinlov/.autojump/etc/profile.d/autojump.sh ]] && source /home/sinlov/.autojump/etc/profile.d/autojump.sh
+    autoload -U compinit && compinit -u
 ```
 
 **使用**：
@@ -396,6 +397,40 @@ sudo pip install capstone
 pip install ropgadget
 ROPgadget 
 ```
+
+如果capstone安装失败，可以安装源代码并编译
+
+```bash
+cd ~
+git clone [https://github.com/aquynh/capstone](https://github.com/aquynh/capstone)
+cd capstone
+make
+make install
+```
+
+如果ropgadget安装失败
+
+```bash
+git clone https://github.com/JonathanSalwan/ROPgadget.git
+cd ROPgadget
+sudo python setup.py install
+```
+
+报错处理（出现traceback)
+
+```python
+ResolutionError: Script 'scripts/ROPgadget' not found in metadata at "..." <---这个link
+```
+
+解决
+
+> scripts在`ROPgadget`目录下
+
+```bash
+sudo cp -r ./scripts link
+```
+
+
 
 
 
